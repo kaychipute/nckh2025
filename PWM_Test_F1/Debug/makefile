@@ -60,8 +60,8 @@ all: main-build
 main-build: PWM_Test_F1.elf secondary-outputs
 
 # Tool invocations
-PWM_Test_F1.elf PWM_Test_F1.map: $(OBJS) $(USER_OBJS) D:\NCKH2025\PWM_Test_F1\STM32F103C8TX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
-	arm-none-eabi-gcc -o "PWM_Test_F1.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"D:\NCKH2025\PWM_Test_F1\STM32F103C8TX_FLASH.ld" --specs=nosys.specs -Wl,-Map="PWM_Test_F1.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -Wl,--start-group -lc -lm -Wl,--end-group
+PWM_Test_F1.elf PWM_Test_F1.map: $(OBJS) $(USER_OBJS) C:\Users\narut\OneDrive\Desktop\NCKH2025_XE\nckh2025\PWM_Test_F1\STM32F103C8TX_FLASH.ld makefile objects.list $(OPTIONAL_TOOL_DEPS)
+	arm-none-eabi-gcc -o "PWM_Test_F1.elf" @"objects.list" $(USER_OBJS) $(LIBS) -mcpu=cortex-m3 -T"C:\Users\narut\OneDrive\Desktop\NCKH2025_XE\nckh2025\PWM_Test_F1\STM32F103C8TX_FLASH.ld" --specs=nosys.specs -Wl,-Map="PWM_Test_F1.map" -Wl,--gc-sections -static --specs=nano.specs -mfloat-abi=soft -mthumb -u _printf_float -u _scanf_float -Wl,--start-group -lc -lm -Wl,--end-group
 	@echo 'Finished building target: $@'
 	@echo ' '
 

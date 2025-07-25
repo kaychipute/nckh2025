@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdlib.h"
+#include "math.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -44,7 +45,11 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim4;
 
+UART_HandleTypeDef huart3;
+
 /* USER CODE BEGIN PV */
+float counter;
+char buffer[50];
 int16_t left_speed, right_speed;
 
 typedef struct Motor
@@ -65,6 +70,9 @@ typedef struct Encoder
 	int xung_x4, pre_xung_x4;
 	float real_vel, fil_vel, pre_vel, target_vel;
 	float angle, target_angle;
+	float d;
+	float target_quang_duong;
+	float quang_duong;
 	float delta_T;
 	uint16_t CPR;
 } Encoder;
@@ -76,7 +84,7 @@ typedef struct PID
 {
 	float target, current;
 	float kP, kI, kD;
-	float uP, uI, pre_uI, uD, u;
+	float uP, uI, pre_uI, uD, u, u_fil;
 	float err, pre_err;
 	float deltaT;
 	float above_limit, below_limit;
@@ -94,6 +102,7 @@ static void MX_GPIO_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_USART3_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -129,9 +138,10 @@ void drive(Motor *motor, int16_t speed)
 	}
 }
 
-void EncoderInit(Encoder *enc, TIM_HandleTypeDef *htim, float delta_T, uint16_t CPR)
+void EncoderInit(Encoder *enc, TIM_HandleTypeDef *htim, float d, float delta_T, uint16_t CPR)
 {
 	enc->htim = htim;
+	enc->d = d;
 	enc->delta_T = delta_T;
 	enc->CPR = CPR;
 	HAL_TIM_Encoder_Start_IT(enc->htim, TIM_CHANNEL_ALL);
@@ -143,7 +153,8 @@ void EncoderRead(Encoder *enc)
 	enc -> xung_x4 += (int16_t) enc -> xung;
 	__HAL_TIM_SET_COUNTER(enc -> htim, 0);
 	enc -> angle = enc -> xung_x4 * 360 / enc -> CPR;
-	enc -> real_vel = ((enc -> xung_x4 - enc -> pre_xung_x4)/ enc -> delta_T) / (enc -> CPR)*60;
+	enc -> quang_duong = (enc -> xung_x4 / 4) * enc -> d * M_PI / enc -> CPR;
+	enc -> real_vel = ((enc -> xung_x4 - enc -> pre_xung_x4)/ enc -> delta_T) / (enc -> CPR)*60/4;
 	enc -> fil_vel = 0.854 * enc -> fil_vel + 0.0728 * enc -> real_vel + 0.078 * enc -> pre_vel;
 	enc -> pre_vel = enc -> real_vel;
 	enc -> pre_xung_x4 = enc -> xung_x4;
@@ -163,7 +174,7 @@ void PID_Cal(PID *pid, float target, float current)
 {
 	pid->err = target - current;
 
-//	if(abs(pid->err) < 1.5) pid->err = 0;
+//	if(abs(pid->err) < 0.5) pid->err = 0;
 
 	pid->uP = pid->kP * pid->err;
 	pid->uI = pid->pre_uI + pid->kI * pid->err * pid->deltaT;
@@ -177,21 +188,28 @@ void PID_Cal(PID *pid, float target, float current)
 	pid->u = pid->uP + pid->uI + pid->uD;
 	pid->u = (pid->u > pid->above_limit) ? pid->above_limit : (pid->u < pid->below_limit) ? pid->below_limit : pid->u;
 }
+void LowPassFilter(float input, float alpha, float *filtered_value)
+{
+    *filtered_value = alpha * input + (1.0f - alpha) * (*filtered_value);
+}
 
 void PID_Speed(PID *pid_speed, Encoder *enc, Motor *motor)
 {
 	PID_Cal(pid_speed, enc->target_vel, enc->real_vel);
-
-	drive(motor, pid_speed->u);
+	LowPassFilter(pid_speed->u, 0.1f, &pid_speed->u_fil);
+	drive(motor, pid_speed->u_fil);
 }
 
-void PID_Position(PID *pid_speed, PID *pid_position, Encoder *enc, Motor *motor)
+void PID_Position(PID *pid_position, PID *pid_speed, Encoder *enc, Motor *motor)
 {
-	PID_Cal(pid_position, enc->target_angle, enc->angle);
-//	drive(pid->u);
-	enc -> target_vel = pid_position -> u;
-	PID_Speed(pid_speed, enc, motor);
+	PID_Cal(pid_position, enc->target_quang_duong, enc->quang_duong);
+	LowPassFilter(pid_position->u, 0.03f, &pid_position->u_fil);
+
+	drive(motor, pid_position->u_fil);
+//	enc -> target_vel = pid_position -> u;
+//	PID_Speed(pid_speed, enc, motor);
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -226,13 +244,14 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM4_Init();
   MX_TIM1_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-  EncoderInit(&encoder_1, &htim1, 0.001, 1);
-  EncoderInit(&encoder_2, &htim4, 0.001, 4096);
+  EncoderInit(&encoder_1, &htim1, 34.0, 0.001, 4096);
+  EncoderInit(&encoder_2, &htim4, 34.0, 0.001, 4096);
   MotorInit(&motor_left, &htim2, TIM_CHANNEL_1, TIM_CHANNEL_2);
   MotorInit(&motor_right, &htim2, TIM_CHANNEL_3, TIM_CHANNEL_4);
-  PID_setParam(&pid_speed_2, 50, 400, 0, 0.001, 1000, -1000);
-  PID_setParam(&pid_position_2, 1, 0, 20, 0.001, 1000, -1000);
+//  PID_setParam(&pid_speed_2, 17.5549127919031, 254.606072797274, 0.101939398615924, 0.001, 1000, -1000);
+  PID_setParam(&pid_position_2, 202.957367753907, 182.290905755023, 20.0825908954933, 0.001, 1000, -1000);
 
   /* USER CODE END 2 */
 
@@ -245,8 +264,11 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	EncoderRead(&encoder_1);
 	EncoderRead(&encoder_2);
+	counter+=0.005;
+	sprintf(buffer, "%f, %f\n", counter, encoder_2.fil_vel);
+	HAL_UART_Transmit(&huart3, (uint8_t *) buffer, sizeof(buffer), HAL_MAX_DELAY);
+	for(uint8_t i = 0; i < sizeof(buffer); i++) buffer[i] = 0;
 //	PID_Speed(&pid_speed_2, &encoder_2, &motor_left);
-
 	PID_Position(&pid_position_2, &pid_speed_2, &encoder_2, &motor_left);
   }
   /* USER CODE END 3 */
@@ -448,6 +470,39 @@ static void MX_TIM4_Init(void)
   /* USER CODE BEGIN TIM4_Init 2 */
 
   /* USER CODE END TIM4_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
 
 }
 
